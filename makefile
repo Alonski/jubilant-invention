@@ -1,6 +1,5 @@
 build:	
-		mpicc -c histogram.c	
-		mpicc -o histogram histogram.o -lm	
+		mpicc -fopenmp -o histogram histogram.c	
 
 clean:	
 	rm *.o histogram	
