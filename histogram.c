@@ -1,6 +1,7 @@
 #include <mpi.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <omp.h>
 
 #define ROOT 0
 #define LEAF 1
@@ -8,12 +9,14 @@
 
 void readInput(int *arr, int size);
 int readSize();
-void calculateHistogram(int *histogram, int *numbers, int size);
+void calculateHistogramOMP(int *histogram, int *numbers, int size);
+void calculateHistogramCUDA(int *histogram, int *numbers, int size);
 void printHistogram(int *histogram, int *numbers, int size);
+void mergeHistograms(int *histogram, int *other_histogram);
 
 int main(int argc, char *argv[])
 {
-    int my_rank, num_procs, size, i, histogram[MAX], *all_numbers, *half_numbers;
+    int my_rank, num_procs, size, i, histogram[MAX], other_histogram[MAX], *all_numbers, *half_numbers;
 
     MPI_Comm matrix_comm;
 
@@ -35,6 +38,7 @@ int main(int argc, char *argv[])
             exit(-1);
         }
         size = readSize();
+        // printf("Size: %d\n", size);
         MPI_Send(&size, 1, MPI_INT, LEAF, 0, MPI_COMM_WORLD);
         all_numbers = (int *)malloc(size * sizeof(int));
 
@@ -43,10 +47,15 @@ int main(int argc, char *argv[])
         half_numbers = all_numbers + size / 2;
         MPI_Send(half_numbers, size / 2 + remainder, MPI_INT, LEAF, 0, MPI_COMM_WORLD);
 
-        printf("Size/2: %d\n", size / 2);
-        printf("Size/2 + remainder: %d\n", size / 2 + remainder);
-        calculateHistogram(histogram, all_numbers, size / 2);
-        printHistogram(histogram, all_numbers, size / 2);
+        // printf("Size/2: %d\n", size / 2);
+        // printf("Size/2 + remainder: %d\n", size / 2 + remainder);
+        calculateHistogramOMP(histogram, all_numbers, size / 2);
+
+        MPI_Recv(other_histogram, MAX, MPI_INT, LEAF, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+        mergeHistograms(histogram, other_histogram);
+
+        printHistogram(histogram, all_numbers, size);
 
         // free allocated memory
         free(all_numbers);
@@ -58,8 +67,11 @@ int main(int argc, char *argv[])
         half_numbers = (int *)malloc(size / 2 + remainder * sizeof(int));
         MPI_Recv(half_numbers, size / 2 + remainder, MPI_INT, ROOT, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
-        calculateHistogram(histogram, half_numbers, size / 2 + remainder);
-        printHistogram(histogram, half_numbers, size / 2 + remainder);
+        calculateHistogramCUDA(histogram, half_numbers, size / 2 + remainder);
+        // printHistogram(histogram, half_numbers, size / 2 + remainder);
+
+        MPI_Send(histogram, MAX, MPI_INT, ROOT, 0, MPI_COMM_WORLD);
+
         // free allocated memory
         free(half_numbers);
     }
@@ -100,20 +112,39 @@ int readSize()
     return size;
 }
 
-void calculateHistogram(int *histogram, int *numbers, int size)
+void calculateHistogramOMP(int *histogram, int *numbers, int size)
 {
-    int i;
-    for (i = 0; i < size; i++)
+    #pragma omp parallel for
+    for (int i = 0; i < size; i++)
+    {
+        #pragma omp atomic
+        histogram[numbers[i]] += 1;
+    }
+}
+
+void calculateHistogramCUDA(int *histogram, int *numbers, int size)
+{
+    for (int i = 0; i < size; i++)
     {
         histogram[numbers[i]] += 1;
     }
 }
 
+void mergeHistograms(int *histogram, int *other_histogram)
+{
+    for (int i = 1; i < MAX; i++)
+    {
+        if (other_histogram[i] > 0)
+        {
+            histogram[i] += other_histogram[i];
+        }
+    }
+}
+
 void printHistogram(int *histogram, int *numbers, int size)
 {
-    int i;
     printf("\n====== Histogram ======\n");
-    for (i = 1; i < MAX; i++)
+    for (int i = 1; i < MAX; i++)
     {
         if (histogram[i] > 0)
         {
