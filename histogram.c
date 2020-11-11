@@ -67,8 +67,7 @@ int main(int argc, char *argv[])
         half_numbers = (int *)malloc(size / 2 + remainder * sizeof(int));
         MPI_Recv(half_numbers, size / 2 + remainder, MPI_INT, ROOT, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
-        calculateHistogramCUDA(histogram, half_numbers, size / 2 + remainder);
-        // printHistogram(histogram, half_numbers, size / 2 + remainder);
+        histogramOnGPU(int *half_numbers, size / 2 + remainder, *histogram);
 
         MPI_Send(histogram, MAX, MPI_INT, ROOT, 0, MPI_COMM_WORLD);
 
@@ -118,14 +117,6 @@ void calculateHistogramOMP(int *histogram, int *numbers, int size)
     for (int i = 0; i < size; i++)
     {
         #pragma omp atomic
-        histogram[numbers[i]] += 1;
-    }
-}
-
-void calculateHistogramCUDA(int *histogram, int *numbers, int size)
-{
-    for (int i = 0; i < size; i++)
-    {
         histogram[numbers[i]] += 1;
     }
 }
