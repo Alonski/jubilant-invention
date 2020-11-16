@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <omp.h>
+#include "proto.h"
 
 #define ROOT 0
 #define LEAF 1
@@ -10,7 +11,6 @@
 void readInput(int *arr, int size);
 int readSize();
 void calculateHistogramOMP(int *histogram, int *numbers, int size);
-void calculateHistogramCUDA(int *histogram, int *numbers, int size);
 void printHistogram(int *histogram, int *numbers, int size);
 void mergeHistograms(int *histogram, int *other_histogram);
 
@@ -68,7 +68,6 @@ int main(int argc, char *argv[])
         MPI_Recv(half_numbers, size / 2 + remainder, MPI_INT, ROOT, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
         calculateHistogramCUDA(histogram, half_numbers, size / 2 + remainder);
-        // printHistogram(histogram, half_numbers, size / 2 + remainder);
 
         MPI_Send(histogram, MAX, MPI_INT, ROOT, 0, MPI_COMM_WORLD);
 
@@ -114,18 +113,10 @@ int readSize()
 
 void calculateHistogramOMP(int *histogram, int *numbers, int size)
 {
-    #pragma omp parallel for
+#pragma omp parallel for
     for (int i = 0; i < size; i++)
     {
-        #pragma omp atomic
-        histogram[numbers[i]] += 1;
-    }
-}
-
-void calculateHistogramCUDA(int *histogram, int *numbers, int size)
-{
-    for (int i = 0; i < size; i++)
-    {
+#pragma omp atomic
         histogram[numbers[i]] += 1;
     }
 }
