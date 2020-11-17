@@ -1,89 +1,97 @@
 #include <cuda_runtime.h>
 #include <helper_cuda.h>
-#include "proto.h"
 
-__global__ void computeOnGPU(int *histogram, int *data, int numElements)
+#define HISTOGRAM_SIZE 256
+
+__global__ void computeOnGPU(int *histogram, int *numbers, int numElements)
 {
     int g_index = blockDim.x * blockIdx.x + threadIdx.x;
-    __shared__ int shared_data[HISTOGRAM_SIZE];
-    shared_data[threadIdx.x] = 0;
+    __shared__ int shared_numbers[HISTOGRAM_SIZE];
+    shared_numbers[threadIdx.x] = 0;
 
     if (g_index < numElements)
-        atomicAdd(&shared_data[data[g_index]], 1);
+        atomicAdd(&shared_numbers[numbers[g_index]], 1);
 
     __syncthreads();
-    atomicAdd(&histogram[threadIdx.x], shared_data[threadIdx.x]);
+    atomicAdd(&histogram[threadIdx.x], shared_numbers[threadIdx.x]);
     __syncthreads();
 }
 
-int calculateHistogramCUDA(int *histogram, int *data, int numElements)
+int *calculateHistogramCUDA(int *numbers, int numElements)
 {
+    int blocks = numElements / HISTOGRAM_SIZE;
+    int *local_histogram = 0, *local_numbers = 0;
+    int *histogram = (int *)malloc((HISTOGRAM_SIZE + 1) * sizeof(int));
+
     // Used to save the error returned from CUDA
     cudaError_t err = cudaSuccess;
 
-    size_t size = numElements * sizeof(int);
+    if (numElements % HISTOGRAM_SIZE != 0)
+    {
+        blocks++;
+    }
 
-    // Allocate on GPU and copy from the host
-    int *d_data, *d_histo;
-    err = cudaMalloc((void **)&d_data, size);
+    // Allocate space for histogram on GPU
+    err = cudaMalloc((void **)&local_histogram, (HISTOGRAM_SIZE + 1) * sizeof(int));
     if (err != cudaSuccess)
     {
         fprintf(stderr, "Failed to allocate device mem - %s\n", cudaGetErrorString(err));
         exit(EXIT_FAILURE);
     }
 
-    // copy from the host to GPU
-    err = cudaMemcpy(d_data, data, size, cudaMemcpyHostToDevice);
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Failed to copy from host - %s\n", cudaGetErrorString(err));
-        exit(EXIT_FAILURE);
-    }
-
-    err = cudaMalloc((void **)&d_histo, HISTOGRAM_SIZE * sizeof(int));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Failed to allocate device mem - %s\n", cudaGetErrorString(err));
-        exit(EXIT_FAILURE);
-    }
-
-    err = cudaMemset(d_histo, 0, HISTOGRAM_SIZE * sizeof(int));
+    // Set empty histogram from the host to GPU
+    err = cudaMemset(local_histogram, 0, (HISTOGRAM_SIZE + 1) * sizeof(int));
     if (err != cudaSuccess)
     {
         fprintf(stderr, "Failed to set device mem - %s\n", cudaGetErrorString(err));
         exit(EXIT_FAILURE);
     }
 
-    // Initiate Kernel
-    int blocks = (numElements + HISTOGRAM_SIZE - 1) / HISTOGRAM_SIZE;
-    computeOnGPU<<<blocks, HISTOGRAM_SIZE>>>(d_histo, d_data, numElements);
-    err = cudaGetLastError();
+    // Allocate space for numbers on GPU
+    err = cudaMalloc((void **)&local_numbers, numElements * sizeof(int));
     if (err != cudaSuccess)
     {
-        fprintf(stderr, "Failed to launch vector add -  %s\n", cudaGetErrorString(err));
+        fprintf(stderr, "Failed to allocate device mem - %s\n", cudaGetErrorString(err));
         exit(EXIT_FAILURE);
     }
 
-    // Copy from GPU to host.
-    err = cudaMemcpy(histogram, d_histo, HISTOGRAM_SIZE * sizeof(int), cudaMemcpyDeviceToHost);
+    // Copy numbers array from memory in host to GPU
+    err = cudaMemcpy(local_numbers, numbers, numElements * sizeof(int), cudaMemcpyHostToDevice);
+    if (err != cudaSuccess)
+    {
+        fprintf(stderr, "Failed to copy from host - %s\n", cudaGetErrorString(err));
+        exit(EXIT_FAILURE);
+    }
+
+    // Calculate histogram array on GPU
+    computeOnGPU<<<blocks, HISTOGRAM_SIZE>>>(local_histogram, local_numbers, numElements);
+
+    err = cudaGetLastError();
+    if (err != cudaSuccess)
+    {
+        fprintf(stderr, "Failed to launch GPU add -  %s\n", cudaGetErrorString(err));
+        exit(EXIT_FAILURE);
+    }
+
+    // Copy back histogram from GPU to host
+    err = cudaMemcpy(histogram, local_histogram, (HISTOGRAM_SIZE + 1) * sizeof(int), cudaMemcpyDeviceToHost);
     if (err != cudaSuccess)
     {
         fprintf(stderr, "Failed to copy from GPU to host -%s\n", cudaGetErrorString(err));
         exit(EXIT_FAILURE);
     }
 
-    // Free memory
-    if (cudaFree(d_data) != cudaSuccess)
+    // Free host memory
+    if (cudaFree(local_histogram) != cudaSuccess)
     {
-        fprintf(stderr, "Failed to free mem - %s\n", cudaGetErrorString(err));
+        fprintf(stderr, "Failed to free histogram memory - %s\n", cudaGetErrorString(err));
+        exit(EXIT_FAILURE);
+    }
+    if (cudaFree(local_numbers) != cudaSuccess)
+    {
+        fprintf(stderr, "Failed to free numbers memory - %s\n", cudaGetErrorString(err));
         exit(EXIT_FAILURE);
     }
 
-    if (cudaFree(d_histo) != cudaSuccess)
-    {
-        fprintf(stderr, "Failed to free data - %s\n", cudaGetErrorString(err));
-        exit(EXIT_FAILURE);
-    }
-
-    return 0;
+    return histogram;
 }

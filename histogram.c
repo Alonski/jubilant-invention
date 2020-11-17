@@ -35,44 +35,56 @@ int main(int argc, char *argv[])
         if (num_procs != 2)
         {
             printf("This program must be run with 2 MPI processes\n");
-            exit(-1);
+            exit(EXIT_FAILURE);
         }
+
+        // Read amount of numbers to input from stdin
         size = readSize();
-        // printf("Size: %d\n", size);
         MPI_Send(&size, 1, MPI_INT, LEAF, 0, MPI_COMM_WORLD);
         all_numbers = (int *)malloc(size * sizeof(int));
 
+        // Read all numbers from stdin
         readInput(all_numbers, size);
+
         int remainder = size % 2;
         half_numbers = all_numbers + size / 2;
+
+        // Send the second half of the numbers to the second MPI process
         MPI_Send(half_numbers, size / 2 + remainder, MPI_INT, LEAF, 0, MPI_COMM_WORLD);
 
-        // printf("Size/2: %d\n", size / 2);
-        // printf("Size/2 + remainder: %d\n", size / 2 + remainder);
+        // Calculate half the numbers for the histogram using OMP
         calculateHistogramOMP(histogram, all_numbers, size / 2);
 
+        // Receive the second half of the histogram from the second MPI process
         MPI_Recv(other_histogram, MAX, MPI_INT, LEAF, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
+        // Merge both histograms from both MPI processes into one histogram array
         mergeHistograms(histogram, other_histogram);
 
         printHistogram(histogram, all_numbers, size);
 
-        // free allocated memory
+        // Free allocated all_numbers memory
         free(all_numbers);
     }
     else
     {
+        // Receive the amount of numbers from the first MPI process
         MPI_Recv(&size, 1, MPI_INT, ROOT, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
         int remainder = size % 2;
         half_numbers = (int *)malloc(size / 2 + remainder * sizeof(int));
+        int *cuda_histogram = (int *)malloc(size / 2 + remainder * sizeof(int));
+
+        // Receive half the numbers from the first MPI process
         MPI_Recv(half_numbers, size / 2 + remainder, MPI_INT, ROOT, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
-        calculateHistogramCUDA(histogram, half_numbers, size / 2 + remainder);
+        // Calculate the second half of the numbers for the histogram using the CUDA and the GPU
+        cuda_histogram = calculateHistogramCUDA(half_numbers, size / 2 + remainder);
 
-        MPI_Send(histogram, MAX, MPI_INT, ROOT, 0, MPI_COMM_WORLD);
+        // Send the filled out histogram back to the first MPI process
+        MPI_Send(cuda_histogram, MAX, MPI_INT, ROOT, 0, MPI_COMM_WORLD);
 
-        // free allocated memory
-        free(half_numbers);
+        // Free allocated cuda_histogram memory
+        free(cuda_histogram);
     }
 
     MPI_Finalize();
@@ -92,7 +104,7 @@ void readInput(int *arr, int size)
         if (input < 1 || input > 256)
         {
             printf("Incorrect input with number: %d. Input numbers must be between 1-256\n", input);
-            exit(-1);
+            exit(EXIT_FAILURE);
         }
         arr[i] = input;
     }
@@ -106,7 +118,7 @@ int readSize()
     if (size < 1)
     {
         printf("Incorrect amount of numbers: %d. Amount must be larger than 0\n", size);
-        exit(-1);
+        exit(EXIT_FAILURE);
     }
     return size;
 }
@@ -124,22 +136,14 @@ void calculateHistogramOMP(int *histogram, int *numbers, int size)
 void mergeHistograms(int *histogram, int *other_histogram)
 {
     for (int i = 1; i < MAX; i++)
-    {
         if (other_histogram[i] > 0)
-        {
             histogram[i] += other_histogram[i];
-        }
-    }
 }
 
 void printHistogram(int *histogram, int *numbers, int size)
 {
     printf("\n====== Histogram ======\n");
     for (int i = 1; i < MAX; i++)
-    {
         if (histogram[i] > 0)
-        {
             printf("%d: %d\n", i, histogram[i]);
-        }
-    }
 }
